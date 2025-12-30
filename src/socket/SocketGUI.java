@@ -55,10 +55,10 @@ public class SocketGUI extends javax.swing.JFrame {
 
     private void loadIcons() {
         try {
-            cameraIcon = resizeIcon(new ImageIcon("camera.png"), 24, 24);
-            sendIcon = resizeIcon(new ImageIcon("send-message.png"), 24, 24);
-            moonIcon = resizeIcon(new ImageIcon("moon.png"), 22, 22);
-            sunIcon = resizeIcon(new ImageIcon("sun.png"), 22, 22);
+            cameraIcon = resizeIcon(new ImageIcon("Pictures/camera.png"), 24, 24);
+            sendIcon = resizeIcon(new ImageIcon("Pictures/send-message.png"), 24, 24);
+            moonIcon = resizeIcon(new ImageIcon("Pictures/moon.png"), 22, 22);
+            sunIcon = resizeIcon(new ImageIcon("Pictures/sun.png"), 22, 22);
         } catch (Exception e) { System.err.println("Icons missing."); }
     }
 
