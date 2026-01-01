@@ -3,8 +3,8 @@ import java.net.*;
 import java.util.*;
 
 public class ChatServer {
-    private static final int PORT = 5000; // same port as your ChatGUI
-    private static Set<PrintWriter> clientWriters = new HashSet<>();
+    private static final int PORT = 5001; // same port as your SocketGUI
+    private static Set<DataOutputStream> clientOutputs = new HashSet<>();
 
     public static void main(String[] args) {
         System.out.println("Chat Server started on port " + PORT);
@@ -24,8 +24,8 @@ public class ChatServer {
 
     private static class ClientHandler implements Runnable {
         private Socket socket;
-        private BufferedReader in;
-        private PrintWriter out;
+        private DataInputStream in;
+        private DataOutputStream out;
 
         public ClientHandler(Socket socket) {
             this.socket = socket;
@@ -34,41 +34,66 @@ public class ChatServer {
         @Override
         public void run() {
             try {
-                // Initialize input/output streams
-                in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                out = new PrintWriter(socket.getOutputStream(), true);
+                in = new DataInputStream(socket.getInputStream());   // <-- add this
+                out = new DataOutputStream(socket.getOutputStream()); // <-- add this
+                clientOutputs.add(out);                               // <-- add this
 
-                // Add this client's writer to the set
-                synchronized (clientWriters) {
-                    clientWriters.add(out);
+                while (true) {
+                    int type = in.readInt();
+
+                    if (type == 1) { // TEXT
+                        String msg = in.readUTF();
+                        broadcastText(msg, out);
+                    } else if (type == 2) { // IMAGE
+                        int size = in.readInt();
+                        byte[] imageBytes = new byte[size];
+                        in.readFully(imageBytes);
+                        broadcastImage(imageBytes, out);
+                    }
                 }
-
-                // Read messages from client and broadcast
-                String message;
-                while ((message = in.readLine()) != null) {
-                    System.out.println("Received: " + message);
-                    broadcastMessage(message, out); // pass the sender
-                }
-
-            } catch (IOException e) {
-                System.out.println("Client disconnected: " + socket.getInetAddress());
+            } catch (Exception e) {
+                e.printStackTrace();
             } finally {
-                try { socket.close(); } catch (IOException ignored) {}
-                synchronized (clientWriters) {
-                    clientWriters.remove(out);
+                try {
+                    clientOutputs.remove(out); // remove client on disconnect
+                    socket.close();
+                } catch (IOException e) { e.printStackTrace(); }
+            }
+        }
+
+
+        private void broadcastText(String message, DataOutputStream sender) {
+            synchronized (clientOutputs) {
+                for (DataOutputStream out : clientOutputs) {
+                    if (out != sender) {
+                        try {
+                            out.writeInt(1); // text type
+                            out.writeUTF(message);
+                            out.flush();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    }
                 }
             }
         }
 
-        // Send message to all connected clients
-        private void broadcastMessage(String message, PrintWriter sender) {
-           synchronized (clientWriters) {
-                for (PrintWriter writer : clientWriters) {
-                    if (writer != sender) {  // skip the sender
-                        writer.println(message);
+        private static void broadcastImage(byte[] imageBytes, DataOutputStream sender) {
+            synchronized (clientOutputs) {
+                for (DataOutputStream out : clientOutputs) {
+                    if (out != sender) { // skip sender
+                        try {
+                            out.writeInt(2);               // IMAGE type
+                            out.writeInt(imageBytes.length);
+                            out.write(imageBytes);
+                            out.flush();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
                     }
                 }
             }
-        } 
+        }
+
     }
 }

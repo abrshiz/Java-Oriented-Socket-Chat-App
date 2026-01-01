@@ -4,6 +4,7 @@ import java.awt.*;
 import java.awt.geom.RoundRectangle2D;
 import java.io.*;
 import java.net.Socket;
+import java.nio.file.Files;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import javax.swing.*;
@@ -14,19 +15,46 @@ import javax.swing.event.DocumentListener;
 public class SocketGUI extends javax.swing.JFrame {
 
     private Socket socket;
-    private BufferedReader in;
-    private PrintWriter out;
+    private DataInputStream in;
+    private DataOutputStream out;
     private JPanel chatContainer;
     private JScrollPane scrollPane;
     private JTextField messageField;
     private JButton actionButton;
     private JLabel titleLabel;
-    private Component verticalGlue; // Added to manage the bottom "spring"
+    private Component verticalGlue;
 
     private ImageIcon sendIcon, cameraIcon, moonIcon, sunIcon;
     private boolean isDarkMode = true;
     private JButton themeBtn;
-    private Color APP_BG, HEADER_COLOR, SENDER_BUBBLE, RECEIVER_BUBBLE, PRIMARY_TEXT, TEXT_MUTED;
+    private Color APP_BG, HEADER_COLOR, SENDER_BUBBLE, RECEIVER_BUBBLE, PRIMARY_TEXT, TEXT_MUTED, INPUT_BG;
+    private void addImageBubble(ImageIcon icon, boolean isSender) {
+        chatContainer.remove(verticalGlue);
+
+        JLabel imageLabel = new JLabel(
+                new ImageIcon(icon.getImage().getScaledInstance(150, -1, Image.SCALE_SMOOTH))
+        );
+
+        JPanel bubble = new JPanel();
+        bubble.setBackground(isSender ? SENDER_BUBBLE : RECEIVER_BUBBLE);
+        bubble.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        bubble.add(imageLabel);
+
+        JPanel wrapper = new JPanel(new FlowLayout(isSender ? FlowLayout.RIGHT : FlowLayout.LEFT));
+        wrapper.setOpaque(false);
+        wrapper.add(bubble);
+
+        chatContainer.add(wrapper);
+        chatContainer.add(verticalGlue);
+
+
+        chatContainer.revalidate();
+        SwingUtilities.invokeLater(() ->
+                scrollPane.getVerticalScrollBar().setValue(
+                        scrollPane.getVerticalScrollBar().getMaximum()
+                )
+        );
+    }
 
     public SocketGUI() {
         updateThemeColors();
@@ -40,18 +68,22 @@ public class SocketGUI extends javax.swing.JFrame {
             APP_BG = new Color(20, 20, 22);
             HEADER_COLOR = new Color(30, 31, 35);
             SENDER_BUBBLE = new Color(0, 132, 255);
-            RECEIVER_BUBBLE = new Color(44, 45, 49);
+            RECEIVER_BUBBLE = new Color(70, 41, 182);
             PRIMARY_TEXT = new Color(245, 245, 245);
-            TEXT_MUTED = new Color(142, 146, 151);
+            TEXT_MUTED = new Color(127, 143, 163);
+            INPUT_BG = new Color(50, 45, 45, 160);
         } else {
-            APP_BG = new Color(242, 243, 245);
+            // ONLY EDITED LIGHT MODE COLORS HERE
+            APP_BG = new Color(255, 255, 255);
             HEADER_COLOR = new Color(255, 255, 255);
             SENDER_BUBBLE = new Color(0, 132, 255);
-            RECEIVER_BUBBLE = new Color(225, 228, 232);
-            PRIMARY_TEXT = new Color(30, 30, 35);
-            TEXT_MUTED = new Color(80, 80, 85);
+            RECEIVER_BUBBLE = new Color(70, 41, 182); // Light bubble color
+            PRIMARY_TEXT = new Color(0, 0, 0);
+            TEXT_MUTED = new Color(127, 143, 163);
+            INPUT_BG = new Color(242, 243, 245, 236); // Light Gray for the input field
         }
     }
+
 
     private void loadIcons() {
         try {
@@ -107,7 +139,6 @@ public class SocketGUI extends javax.swing.JFrame {
         chatContainer.setBackground(APP_BG);
         chatContainer.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-        // Create the "Spring" that pushes everything up
         verticalGlue = Box.createVerticalGlue();
         chatContainer.add(verticalGlue);
 
@@ -122,7 +153,7 @@ public class SocketGUI extends javax.swing.JFrame {
 
         messageField = new JTextField();
         messageField.setFont(new Font("SansSerif", Font.PLAIN, 15));
-        messageField.setBackground(isDarkMode ? new Color(45, 46, 50) : Color.WHITE);
+        messageField.setBackground(INPUT_BG);
         messageField.setForeground(PRIMARY_TEXT);
         messageField.setCaretColor(PRIMARY_TEXT);
         messageField.setBorder(BorderFactory.createCompoundBorder(
@@ -150,6 +181,8 @@ public class SocketGUI extends javax.swing.JFrame {
             else handleSendMessage();
         });
 
+
+
         bottomPanel.add(messageField, BorderLayout.CENTER);
         bottomPanel.add(actionButton, BorderLayout.EAST);
 
@@ -157,6 +190,7 @@ public class SocketGUI extends javax.swing.JFrame {
         add(scrollPane, BorderLayout.CENTER);
         add(bottomPanel, BorderLayout.SOUTH);
     }
+
 
     private void refreshUI() {
         getContentPane().setBackground(APP_BG);
@@ -168,7 +202,7 @@ public class SocketGUI extends javax.swing.JFrame {
         header.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, isDarkMode ? new Color(50,50,50) : new Color(210,210,210)));
         JPanel bottom = (JPanel) messageField.getParent();
         bottom.setBackground(HEADER_COLOR);
-        messageField.setBackground(isDarkMode ? new Color(45, 46, 50) : Color.WHITE);
+        messageField.setBackground(INPUT_BG);
         messageField.setForeground(PRIMARY_TEXT);
         messageField.setCaretColor(PRIMARY_TEXT);
         messageField.setBorder(BorderFactory.createCompoundBorder(
@@ -182,27 +216,57 @@ public class SocketGUI extends javax.swing.JFrame {
     private void handleSendMessage() {
         String msg = messageField.getText().trim();
         if (!msg.isEmpty()) {
-            addBubble(msg, true);
-            if (out != null) out.println(msg);
-            messageField.setText("");
+            addBubble(msg, true);     // show locally
+            messageField.setText("");  // <-- clear immediately
+
+            if (out != null) {
+                try {
+                    out.writeInt(1);   // TEXT type
+                    out.writeUTF(msg); // message
+                    out.flush();
+                } catch (IOException e) {
+                    addBubble("Failed to send message", true);
+                }
+            }
         }
     }
 
     private void handlePhotoAction() {
+        if (out == null) {
+            addBubble("Server not connected yet", true);
+            return;
+        }
+
         JFileChooser chooser = new JFileChooser();
         if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
-            addBubble("📷 Photo: " + chooser.getSelectedFile().getName(), true);
+            File file = chooser.getSelectedFile();
+            try {
+                byte[] imageBytes = Files.readAllBytes(file.toPath());
+
+                // Send to server
+                out.writeInt(2); // TYPE = IMAGE
+                out.writeInt(imageBytes.length);
+                out.write(imageBytes);
+                out.flush();
+
+                // Show the image locally in the chat
+                ImageIcon icon = new ImageIcon(imageBytes);
+                addImageBubble(icon, true); // <-- THIS will show the photo
+
+            } catch (IOException e) {
+                addBubble("Failed to send image", true);
+            }
         }
     }
 
+
     private void addBubble(String message, boolean isSender) {
-        // Remove the glue temporarily to add message at the end, then put glue back
         chatContainer.remove(verticalGlue);
 
         JPanel wrapper = new JPanel(new FlowLayout(isSender ? FlowLayout.RIGHT : FlowLayout.LEFT, 0, 0));
         wrapper.setOpaque(false);
-        wrapper.setBorder(BorderFactory.createEmptyBorder(0, 0, 15, 0)); // Fixed 15px gap
-        wrapper.setMaximumSize(new Dimension(Integer.MAX_VALUE, 80)); // Prevent huge stretching
+        wrapper.setBorder(BorderFactory.createEmptyBorder(0, 0, 15, 0));
+        wrapper.setMaximumSize(new Dimension(Integer.MAX_VALUE, 80));
 
         String time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"));
 
@@ -232,15 +296,13 @@ public class SocketGUI extends javax.swing.JFrame {
 
         JLabel timeLabel = new JLabel(time);
         timeLabel.setFont(new Font("SansSerif", Font.PLAIN, 10));
-        timeLabel.setForeground(isDarkMode ? TEXT_MUTED : new Color(80, 80, 80));
+        timeLabel.setForeground(TEXT_MUTED);
         timeLabel.setAlignmentX(isSender ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
         container.add(Box.createVerticalStrut(2));
         container.add(timeLabel);
 
         wrapper.add(container);
         chatContainer.add(wrapper);
-
-        // Put the glue back at the bottom
         chatContainer.add(verticalGlue);
 
         chatContainer.revalidate();
@@ -249,16 +311,42 @@ public class SocketGUI extends javax.swing.JFrame {
 
     private void connectToServer() {
         new Thread(() -> {
-            try {
-                socket = new Socket("localhost", 5000);
-                in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                out = new PrintWriter(socket.getOutputStream(), true);
-                addBubble("Server Connection Active", false);
-                String line;
-                while ((line = in.readLine()) != null) { addBubble(line, false); }
-            } catch (IOException e) { addBubble("Offline", false); }
+            while (socket == null || !socket.isConnected()) {
+                try {
+                    socket = new Socket("10.235.102.111", 5001);
+                    in = new DataInputStream(socket.getInputStream());
+                    out = new DataOutputStream(socket.getOutputStream());
+                    addBubble("Server Connection Active", false);
+                    listenForMessages();
+                    break;
+                } catch (IOException e) {
+                    addBubble("Retrying connection...", false);
+                    try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+                }
+            }
         }).start();
     }
+
+    private void listenForMessages() {
+        new Thread(() -> {
+            try {
+                while (true) {
+                    int type = in.readInt();
+                    if (type == 1) { // TEXT
+                        addBubble(in.readUTF(), false);
+                    } else if (type == 2) { // IMAGE
+                        int size = in.readInt();
+                        byte[] imageBytes = new byte[size];
+                        in.readFully(imageBytes);
+                        addImageBubble(new ImageIcon(imageBytes), false);
+                    }
+                }
+            } catch (IOException e) {
+                addBubble("Disconnected from server", false);
+            }
+        }).start();
+    }
+
 
     class RoundedBorder extends AbstractBorder {
         private int radius; Color color;
@@ -272,6 +360,7 @@ public class SocketGUI extends javax.swing.JFrame {
             g2.dispose();
         }
     }
+
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> new SocketGUI().setVisible(true));
